@@ -1,0 +1,76 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    name: Build Ani Games Billing APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Locate and extract Android project ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP_FILE="$(find . -maxdepth 1 -type f -iname '*GITHUB-BUILD*.zip' -print -quit)"
+          if [ -z "$ZIP_FILE" ]; then
+            echo "::error::Android source ZIP not found in repository root. Upload the complete *GITHUB-BUILD*.zip file."
+            exit 1
+          fi
+          echo "Using source archive: $ZIP_FILE"
+          PROJECT_DIR="$RUNNER_TEMP/anigames-android-project"
+          mkdir -p "$PROJECT_DIR"
+          unzip -q "$ZIP_FILE" -d "$PROJECT_DIR"
+          if [ ! -f "$PROJECT_DIR/android/settings.gradle" ] || [ ! -f "$PROJECT_DIR/android/app/build.gradle" ]; then
+            echo "::error::ZIP extracted, but android/settings.gradle or android/app/build.gradle is missing."
+            echo "Files found in archive:"
+            find "$PROJECT_DIR" -maxdepth 4 -type f | head -80
+            exit 1
+          fi
+          echo "ANDROID_PROJECT_DIR=$PROJECT_DIR/android" >> "$GITHUB_ENV"
+          echo "Extracted Android project successfully."
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools'
+
+      - name: Install Android SDK 35 packages
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '8.9'
+
+      - name: Build debug APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle --no-daemon --stacktrace -p "$ANDROID_PROJECT_DIR" assembleDebug
+          mkdir -p "$GITHUB_WORKSPACE/apk-output"
+          cp "$ANDROID_PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk" "$GITHUB_WORKSPACE/apk-output/Ani-Games-Billing-v11.29.0-debug.apk"
+          ls -lh "$GITHUB_WORKSPACE/apk-output/Ani-Games-Billing-v11.29.0-debug.apk"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Ani-Games-Billing-Android-v11.29.0-debug-apk
+          path: apk-output/Ani-Games-Billing-v11.29.0-debug.apk
+          if-no-files-found: error
+          retention-days: 30
